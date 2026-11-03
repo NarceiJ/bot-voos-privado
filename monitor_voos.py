@@ -1,38 +1,35 @@
 import os
-import time
-import requests
+requests_import = __import__('requests')
 
 # 1. Carregar as Secrets do GitHub Actions
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-URL = "https://google-flights-api4.p.rapidapi.com/v1/google-flights-scraper/run"
+# URL do seu painel no Render e o utilizador a monitorizar
+PANEL_URL = "https://SEU-APP-NO-RENDER.onrender.com"  # Substitua pelo URL real do Render
+CLIENTE_USERNAME = "admin"  # Ou o username do cliente registado no painel
 
-headers = {
-    "X-RapidAPI-Key": RAPIDAPI_KEY,
-    "X-RapidAPI-Host": "google-flights-api4.p.rapidapi.com",
-    "Content-Type": "application/json"
-}
+def buscar_configuracoes_do_painel():
+    try:
+        url_api = f"{PANEL_URL}/api/flight-config/{CLIENTE_USERNAME}"
+        response = requests_import.get(url_api)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Erro ao buscar configurações no painel: {response.status_code}")
+    except Exception as e:
+        print(f"Falha de conexão com o painel web: {e}")
+    return None
 
-payload = {
-    "origin": "GRU",
-    "destination": "MCZ",
-    "departureDate": "2027-01-01",
-    "currency": "BRL",
-    "adults": 1,
-    "cabinClass": "economy"
-}
-
-def enviar_telegram(mensagem):
+def enviar_telegram(chat_id, mensagem):
     url_telegram = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     body = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": chat_id,
         "text": mensagem,
         "parse_mode": "Markdown"
     }
     try:
-        response = requests.post(url_telegram, json=body)
+        response = requests_import.post(url_telegram, json=body)
         if response.status_code == 200:
             print("Mensagem enviada com sucesso para o Telegram!")
         else:
@@ -41,81 +38,75 @@ def enviar_telegram(mensagem):
         print(f"Falha de conexão com o Telegram: {e}")
 
 def verificar_voos():
-    print("Iniciando verificação de voos GRU -> MCZ (01/01/2027)...")
+    print("A carregar configurações do painel web...")
+    config = buscar_configuracoes_do_painel()
     
+    if not config:
+        print("Aviso: Não foi possível obter as configurações. A execução será abortada.")
+        return
+
+    origin = config.get("origin", "GRU")
+    destination = config.get("destination", "MCZ")
+    departure_date = config.get("departure_date", "2026-12-31")
+    max_stops = config.get("max_stops", "nonstop")
+    chat_id = config.get("telegram_chat_id")
+
+    if not chat_id:
+        print("Erro: O Chat ID do Telegram não está configurado.")
+        return
+
+    print(f"Iniciando verificação de voos: {origin} -> {destination} ({departure_date})...")
+
+    URL = "https://google-flights-scraper.p.rapidapi.com/api/flights/one-way"
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "google-flights-scraper.p.rapidapi.com"
+    }
+    params = {
+        "origin": origin,
+        "destination": destination,
+        "departure_date": departure_date,
+        "adults": 1,
+        "cabin_class": "economy",
+        "max_stops": max_stops,
+        "currency": "BRL",
+        "sort_by": "cheapest"
+    }
+
     try:
-        response = requests.post(URL, headers=headers, json=payload)
-        print(f"Status inicial da API: {response.status_code}")
+        response = requests_import.get(URL, headers=headers, params=params)
+        print(f"Status da API: {response.status_code}")
         
-        if response.status_code in [200, 202]:
+        if response.status_code == 200:
             dados = response.json()
-            poll_url = dados.get("pollUrl")
+            voos = dados.get("flights", [])
             
-            if poll_url:
-                print("Job iniciado em segundo plano. Aguardando processamento...")
+            if voos:
+                melhor_voo = voos[0]
+                preco = melhor_voo.get("price", "Sob consulta")
+                moeda = melhor_voo.get("currency", "BRL")
+                companhia = melhor_voo.get("airline_name", "Não informada")
                 
-                for tentativa in range(6):
-                    time.sleep(10)
-                    print(f"Tentativa {tentativa + 1} de buscar resultados...")
-                    
-                    poll_response = requests.get(poll_url, headers=headers)
-                    if poll_response.status_code == 200:
-                        poll_data = poll_response.json()
-                        status_job = poll_data.get("status")
-                        print(f"Status atual do job: {status_job}")
-                        
-                        if status_job == "SUCCEEDED":
-                            voos = poll_data.get("items", []) or poll_data.get("data", [])
-                            if voos:
-                                melhor_voo = voos[0]
-                                
-                                # Extraindo detalhes úteis incluindo o link direto
-                                preco = melhor_voo.get("priceLabel", melhor_voo.get("price", "Preço sob consulta"))
-                                companhia = melhor_voo.get("airline", "Não informada")
-                                escalas = melhor_voo.get("stops", 0)
-                                link_voo = melhor_voo.get("googleFlightsUrl", "https://www.google.com/travel/flights")
-                                
-                                tipo_voo = "Voo Direto ✈️" if escalas == 0 else f"{escalas} escala(s)"
-                                
-                                mensagem = f"✈️ *Alerta de Voo Encontrado!*\n\n" \
-                                           f"📍 Rota: GRU ➡️ MCZ\n" \
-                                           f"📅 Data: 01/01/2027\n" \
-                                           f"🏢 Companhia: {companhia}\n" \
-                                           f"🔄 Tipo: {tipo_voo}\n" \
-                                           f"💰 Menor Preço: {preco}\n\n" \
-                                           f"🔗 [Ver Voo no Google Flights]({link_voo})"
-                                
-                                enviar_telegram(mensagem)
-                                return
-                        elif status_job in ["FAILED", "ABORTED"]:
-                            print("O processamento da pesquisa falhou no servidor da API.")
-                            break
+                link_google_flights = f"https://www.google.com/travel/flights?q=flights+from+{origin}+to+{destination}+on+{departure_date}"
                 
-                print("Tempo limite excedido aguardando os resultados da pesquisa.")
+                tipo_str = "Voo Direto ✈️" if max_stops == "nonstop" else "Com ou sem escala"
+                
+                mensagem = f"✈️ *Alerta de Voo Encontrado*\n\n" \
+                           f"📍 Rota: {origin} ➡️ {destination}\n" \
+                           f"📅 Data: {departure_date}\n" \
+                           f"🏢 Companhia: {companhia}\n" \
+                           f"🔄 Tipo: {tipo_str}\n" \
+                           f"💰 Menor Preço: {moeda} {preco}\n\n" \
+                           f"🔗 [Ver Voo no Google Flights]({link_google_flights})"
+                
+                enviar_telegram(chat_id, mensagem)
             else:
-                voos = dados.get("items", []) or dados.get("data", [])
-                if voos:
-                    melhor_voo = voos[0]
-                    preco = melhor_voo.get("priceLabel", "Preço sob consulta")
-                    companhia = melhor_voo.get("airline", "Não informada")
-                    escalas = melhor_voo.get("stops", 0)
-                    link_voo = melhor_voo.get("googleFlightsUrl", "https://www.google.com/travel/flights")
-                    tipo_voo = "Voo Direto ✈️" if escalas == 0 else f"{escalas} escala(s)"
-                    
-                    mensagem = f"✈️ *Alerta de Voo Encontrado!*\n\n" \
-                               f"📍 Rota: GRU ➡️ MCZ\n" \
-                               f"📅 Data: 01/01/2027\n" \
-                               f"🏢 Companhia: {companhia}\n" \
-                               f"🔄 Tipo: {tipo_voo}\n" \
-                               f"💰 Menor Preço: {preco}\n\n" \
-                               f"🔗 [Ver Voo no Google Flights]({link_voo})"
-                    
-                    enviar_telegram(mensagem)
+                print("Nenhum voo encontrado para os parâmetros informados.")
         else:
-            print(f"A API retornou um código inesperado: {response.status_code} - {response.text}")
+            print(f"Erro na API: {response.status_code} - {response.text}")
             
     except Exception as e:
-        print(f"Erro na execução da requisição: {e}")
+    print(f"Erro na execução da requisição: {e}")
 
 if __name__ == "__main__":
     verificar_voos()
