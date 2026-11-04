@@ -5,7 +5,7 @@ requests_import = __import__('requests')
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
-# URL do seu painel no Render (apontando para o novo endpoint do bot)
+# URL do seu painel no Render
 PANEL_URL = "https://painel-voos.onrender.com/api/bot/rotas"
 
 def buscar_todos_os_clientes():
@@ -60,21 +60,16 @@ def verificar_voos_todos():
         username = rota.get("username", "Desconhecido")
         origin = rota.get("origem", "GRU")
         destination = rota.get("destino", "MCZ")
+        chat_id = rota.get("telegram_chat_id")
         
-        # Formata a data se vier com timestamp do Supabase (ex: 2027-01-15T00:00:00.000Z -> 2027-01-15)
         raw_date = rota.get("data_voo")
         departure_date = raw_date.split("T")[0] if raw_date else "2026-12-31"
-        
         max_stops = "nonstop"
-        
-        # Como o chat_id do Telegram pode vir do utilizador ou de uma variável de ambiente/config específica:
-        # Se quiser definir um chat_id global para testes ou por utilizador, ajuste aqui.
-        chat_id = os.environ.get("TELEGRAM_CHAT_ID") # ou rota.get("telegram_chat_id") se tiver essa coluna
 
         print(f"\n--- Processando rota de {username}: ({origin} -> {destination} em {departure_date}) ---")
 
         if not chat_id:
-            print(f"Pulando {username}: Chat ID do Telegram não configurado nos segredos.")
+            print(f"Pulando {username}: Chat ID do Telegram não configurado para este cliente.")
             continue
 
         params = {
