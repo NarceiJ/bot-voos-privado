@@ -5,17 +5,17 @@ requests_import = __import__('requests')
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
-# URL do seu painel no Render
-PANEL_URL = "https://painel-voos.onrender.com"
+# URL do seu painel no Render (apontando para o novo endpoint do bot)
+PANEL_URL = "https://painel-voos.onrender.com/api/bot/rotas"
 
 def buscar_todos_os_clientes():
     try:
-        url_api = f"{PANEL_URL}/api/flight-configs-all"
-        response = requests_import.get(url_api)
+        print(f"A carregar rotas de: {PANEL_URL}")
+        response = requests_import.get(PANEL_URL)
         if response.status_code == 200:
             return response.json()
         else:
-            print(f"Erro ao buscar lista de clientes: {response.status_code}")
+            print(f"Erro ao buscar lista de rotas: {response.status_code} - {response.text}")
     except Exception as e:
         print(f"Falha de conexão com o painel web: {e}")
     return []
@@ -41,14 +41,14 @@ def enviar_telegram(chat_id, mensagem):
         print(f"Falha de conexão com o Telegram: {e}")
 
 def verificar_voos_todos():
-    print("A carregar configurações de todos os clientes do painel web...")
-    clientes = buscar_todos_os_clientes()
+    print("A carregar rotas do painel web...")
+    rotas_cadastradas = buscar_todos_os_clientes()
     
-    if not clientes:
-        print("Aviso: Nenhum cliente encontrado ou painel inacessível.")
+    if not rotas_cadastradas:
+        print("Aviso: Nenhuma rota encontrada ou painel inacessível.")
         return
 
-    print(f"Total de clientes a processar: {len(clientes)}")
+    print(f"Total de rotas a processar: {len(rotas_cadastradas)}")
 
     URL = "https://google-flights-scraper.p.rapidapi.com/api/flights/one-way"
     headers = {
@@ -56,18 +56,25 @@ def verificar_voos_todos():
         "X-RapidAPI-Host": "google-flights-scraper.p.rapidapi.com"
     }
 
-    for config in clientes:
-        username = config.get("username", "Desconhecido")
-        origin = config.get("origin", "GRU")
-        destination = config.get("destination", "MCZ")
-        departure_date = config.get("departure_date", "2026-12-31")
-        max_stops = config.get("max_stops", "nonstop")
-        chat_id = config.get("telegram_chat_id")
+    for rota in rotas_cadastradas:
+        username = rota.get("username", "Desconhecido")
+        origin = rota.get("origem", "GRU")
+        destination = rota.get("destino", "MCZ")
+        
+        # Formata a data se vier com timestamp do Supabase (ex: 2027-01-15T00:00:00.000Z -> 2027-01-15)
+        raw_date = rota.get("data_voo")
+        departure_date = raw_date.split("T")[0] if raw_date else "2026-12-31"
+        
+        max_stops = "nonstop"
+        
+        # Como o chat_id do Telegram pode vir do utilizador ou de uma variável de ambiente/config específica:
+        # Se quiser definir um chat_id global para testes ou por utilizador, ajuste aqui.
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID") # ou rota.get("telegram_chat_id") se tiver essa coluna
 
-        print(f"\n--- Processando cliente: {username} ({origin} -> {destination} em {departure_date}) ---")
+        print(f"\n--- Processando rota de {username}: ({origin} -> {destination} em {departure_date}) ---")
 
         if not chat_id:
-            print(f"Pulando {username}: Chat ID do Telegram não configurado.")
+            print(f"Pulando {username}: Chat ID do Telegram não configurado nos segredos.")
             continue
 
         params = {
